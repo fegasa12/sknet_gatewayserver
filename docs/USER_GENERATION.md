@@ -34,6 +34,7 @@ npm run user:generate -- -c 10 -p test
 | `-l, --length` | Password length | 12 | `-l 16` |
 | `-t, --totp` | Enable TOTP 2FA | false | `-t` |
 | `-b, --biometric` | Enable biometric auth | false | `-b` |
+| `-H, --hash` | Include bcrypt password hash | false | `-H` |
 | `-f, --format` | Output format | "json" | `-f csv` |
 | `-o, --output` | Output file | stdout | `-o users.json` |
 | `-h, --help` | Show help | - | `-h` |
@@ -48,6 +49,9 @@ npm run user:generate -- -c 3 -p test -d test.local
 
 # Generate users with 2FA enabled
 npm run user:generate -- -c 5 -p test -t
+
+# Generate users with password hashes for database import
+npm run user:generate -- -c 3 -p test -H
 ```
 
 ### **2. Bulk User Creation**
@@ -84,6 +88,7 @@ npm run user:generate -- -c 3 -f table
     "username": "user1",
     "email": "user1@example.com",
     "password": "Kj8#mN9$pL2",
+    "password_hash": "$2b$12$8zRLfCqeOnsxyHrpySYpjuLdhe61gbQYk0z55ihi3jqcsl3WphGyG",
     "totp_secret": "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
     "biometric_enabled": false,
     "created_at": "2024-01-01T00:00:00.000Z",
@@ -95,8 +100,8 @@ npm run user:generate -- -c 3 -f table
 ### **CSV Format**
 
 ```csv
-id,username,email,password,totp_secret,biometric_enabled,created_at,qr_code_url
-1,user1,user1@example.com,Kj8#mN9$pL2,ABCDEFGHIJKLMNOPQRSTUVWXYZ234567,false,2024-01-01T00:00:00.000Z,https://chart.googleapis.com/chart?chs=200x200&chld=M|0&cht=qr&chl=otpauth://totp/Gateway%20Server%20(user1)?secret=ABCDEFGHIJKLMNOPQRSTUVWXYZ234567&issuer=Secure%20Gateway
+id,username,email,password,password_hash,totp_secret,biometric_enabled,created_at,qr_code_url
+1,user1,user1@example.com,Kj8#mN9$pL2,$2b$12$8zRLfCqeOnsxyHrpySYpjuLdhe61gbQYk0z55ihi3jqcsl3WphGyG,ABCDEFGHIJKLMNOPQRSTUVWXYZ234567,false,2024-01-01T00:00:00.000Z,https://chart.googleapis.com/chart?chs=200x200&chld=M|0&cht=qr&chl=otpauth://totp/Gateway%20Server%20(user1)?secret=ABCDEFGHIJKLMNOPQRSTUVWXYZ234567&issuer=Secure%20Gateway
 ```
 
 ### **Table Format**
@@ -116,6 +121,14 @@ ID  | Username         | Email                     | Password       | TOTP     |
 - **Character set**: A-Z, a-z, 0-9, !@#$%^&*
 - **Random generation**: Uses `/dev/urandom`
 - **Configurable length**: Set with `-l` option
+
+### **Password Hashing**
+
+- **Algorithm**: bcrypt with configurable salt rounds (default: 12)
+- **Format**: `$2b$12$...` (bcrypt format)
+- **Security**: Industry-standard hashing for password storage
+- **Usage**: Include with `-H` flag for database import
+- **Compatibility**: Works with existing authentication system
 
 ### **TOTP Secret Generation**
 
@@ -180,8 +193,8 @@ npm run user:generate -- -c 3 -p mobile -b -o mobile-users.json
 #!/bin/bash
 # Import generated users to database
 
-# Generate users
-npm run user:generate -- -c 10 -p import -f csv -o users.csv
+# Generate users with password hashes
+npm run user:generate -- -c 10 -p import -H -f csv -o users.csv
 
 # Import using psql (example)
 psql $DATABASE_URL -c "\COPY users(username, email, password_hash) FROM 'users.csv' CSV HEADER"

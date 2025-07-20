@@ -11,6 +11,9 @@ npm run user:generate -- -c 5
 
 # Generate with 2FA
 npm run user:generate -- -c 3 -t
+
+# Generate with password hash
+npm run user:generate -- -c 1 -H
 ```
 
 ## 📋 Command Options
@@ -23,6 +26,7 @@ npm run user:generate -- -c 3 -t
 | `-l, --length` | Password length | 12 | `-l 16` |
 | `-t, --totp` | Enable 2FA | false | `-t` |
 | `-b, --biometric` | Enable biometric | false | `-b` |
+| `-H, --hash` | Include password hash | false | `-H` |
 | `-f, --format` | Output format | "json" | `-f csv` |
 | `-o, --output` | Output file | stdout | `-o users.json` |
 | `-h, --help` | Show help | - | `-h` |
@@ -68,6 +72,7 @@ npm run user:generate -- -c 3 -f table
   "username": "user1",
   "email": "user1@example.com",
   "password": "Kj8#mN9$pL2",
+  "password_hash": "$2b$12$8zRLfCqeOnsxyHrpySYpjuLdhe61gbQYk0z55ihi3jqcsl3WphGyG",
   "totp_secret": "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
   "biometric_enabled": false,
   "created_at": "2024-01-01T00:00:00.000Z",
@@ -77,8 +82,8 @@ npm run user:generate -- -c 3 -f table
 
 ### **CSV Format**
 ```csv
-id,username,email,password,totp_secret,biometric_enabled,created_at,qr_code_url
-1,user1,user1@example.com,Kj8#mN9$pL2,ABCDEFGHIJKLMNOPQRSTUVWXYZ234567,false,2024-01-01T00:00:00.000Z,https://chart.googleapis.com/chart?chs=200x200&chld=M|0&cht=qr&chl=otpauth://totp/Gateway%20Server%20(user1)?secret=ABCDEFGHIJKLMNOPQRSTUVWXYZ234567&issuer=Secure%20Gateway
+id,username,email,password,password_hash,totp_secret,biometric_enabled,created_at,qr_code_url
+1,user1,user1@example.com,Kj8#mN9$pL2,$2b$12$8zRLfCqeOnsxyHrpySYpjuLdhe61gbQYk0z55ihi3jqcsl3WphGyG,ABCDEFGHIJKLMNOPQRSTUVWXYZ234567,false,2024-01-01T00:00:00.000Z,https://chart.googleapis.com/chart?chs=200x200&chld=M|0&cht=qr&chl=otpauth://totp/Gateway%20Server%20(user1)?secret=ABCDEFGHIJKLMNOPQRSTUVWXYZ234567&issuer=Secure%20Gateway
 ```
 
 ### **Table Format**
@@ -130,11 +135,11 @@ npm run user:generate -- -c 3 -p mobile -b -o mobile-users.json
 
 ### **Database Import**
 ```bash
-# Generate CSV
-npm run user:generate -- -c 10 -p import -f csv -o users.csv
+# Generate CSV with password hashes
+npm run user:generate -- -c 10 -p import -H -f csv -o users.csv
 
 # Import to database
-psql $DATABASE_URL -c "\COPY users(username, email) FROM 'users.csv' CSV HEADER"
+psql $DATABASE_URL -c "\COPY users(username, email, password_hash) FROM 'users.csv' CSV HEADER"
 ```
 
 ## 🚨 Best Practices

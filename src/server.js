@@ -184,6 +184,9 @@ class GatewayServer {
     this.app.post('/api/user/public-key', this.authenticateToken, this.storeUserPublicKey.bind(this));
     this.app.get('/api/user/profile', this.authenticateToken, this.getUserProfile.bind(this));
 
+    // Private API proxy routes
+    this.app.all('/api/proxy/*', this.authenticateToken, this.proxyToPrivateApi.bind(this));
+
     // Health check
     this.app.get('/api/health', (req, res) => {
       res.json({ status: 'healthy', timestamp: new Date().toISOString() });
@@ -1101,6 +1104,86 @@ class GatewayServer {
     } catch (error) {
       console.error('Get user profile error:', error);
       res.status(500).json({ error: 'Failed to get user profile' });
+    }
+  }
+
+  async proxyToPrivateApi(req, res) {
+    try {
+      const userId = req.user.userId;
+      const username = req.user.username;
+      
+      // Extract the path after /api/proxy/
+      const proxyPath = req.path.replace('/api/proxy', '');
+      
+      // Determine the HTTP method
+      const method = req.method.toLowerCase();
+      
+      // Prepare request configuration
+      const config = {
+        method: method,
+        url: proxyPath,
+        headers: {
+          'X-User-ID': userId,
+          'X-Username': username,
+          'Content-Type': req.get('Content-Type') || 'application/json'
+        }
+      };
+
+      // Add request body for POST, PUT, PATCH requests
+      if (['post', 'put', 'patch'].includes(method) && req.body) {
+        config.data = req.body;
+      }
+
+      // Add query parameters
+      if (Object.keys(req.query).length > 0) {
+        config.params = req.query;
+      }
+
+      // Make request to private API
+      const response = await this.privateApiClient.request(config);
+
+      // Log the API call
+      await this.logSecurityEventInternal('private_api_call', userId, req, {
+        endpoint: proxyPath,
+        method: method,
+        statusCode: response.status,
+        userAgent: req.get('User-Agent')
+      });
+
+      // Forward the response
+      res.status(response.status).json(response.data);
+
+    } catch (error) {
+      console.error('Private API proxy error:', error);
+      
+      // Log the failed API call
+      if (req.user) {
+        await this.logSecurityEventInternal('private_api_error', req.user.userId, req, {
+          endpoint: req.path.replace('/api/proxy', ''),
+          method: req.method,
+          error: error.message
+        });
+      }
+
+      // Handle different types of errors
+      if (error.response) {
+        // Private API returned an error response
+        res.status(error.response.status).json({
+          error: 'Private API error',
+          message: error.response.data?.message || error.response.statusText,
+          status: error.response.status
+        });
+      } else if (error.code === 'ECONNREFUSED') {
+        res.status(503).json({
+          error: 'Private API unavailable',
+          message: 'The private API service is not available'
+        });
+      } else {
+        res.status(500).json({
+          error: 'Proxy error',
+          message: 'Failed to proxy request to private API'
+        });
+      }
     }
   }
 

@@ -173,6 +173,9 @@ npm run user:generate -- -c 5 -t
 # Generate users in CSV format
 npm run user:generate -- -c 10 -f csv -o users.csv
 
+# Generate users with password hashes for database import
+npm run user:generate -- -c 5 -H
+
 # Generate mobile users with biometric
 npm run user:generate -- -c 3 -p mobile -b
 ```
@@ -237,6 +240,9 @@ The server creates the following tables:
 ### Document Management
 - `POST /api/documents/:id/secure-view` - Create secure document view
 - `GET /api/documents/secure/:token` - Serve secure document
+
+### Private API Proxy
+- `ALL /api/proxy/*` - Proxy requests to private API (authenticated)
 
 ### Audit & Security
 - `POST /api/audit/document-access` - Log document access
