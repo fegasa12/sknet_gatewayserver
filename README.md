@@ -138,6 +138,27 @@ Client App → Gateway Server → Private API
 
 **📖 For detailed Railway setup**: See [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md)
 
+### User Management
+
+Add users to your system:
+
+```bash
+# Local development
+npm run user:add
+
+# Production (Railway)
+railway run npm run user:add
+```
+
+The interactive script allows you to:
+- Create new user accounts
+- Enable Two-Factor Authentication (TOTP)
+- Set up biometric authentication
+- View existing users
+- Generate QR codes for 2FA setup
+
+**📖 For detailed user management**: See [docs/USER_MANAGEMENT.md](docs/USER_MANAGEMENT.md)
+
 ### Testing Configuration
 
 For testing purposes, you can set `ALLOWED_ORIGINS=*` to allow all origins. This is useful for:
