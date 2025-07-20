@@ -116,13 +116,29 @@ Client App → Gateway Server → Private API
    railway variables set JWT_REFRESH_SECRET=your_super_secret_refresh_key
    railway variables set GATEWAY_SECRET=your_gateway_secret
    railway variables set PRIVATE_API_URL=https://your-private-api.com
-   railway variables set ALLOWED_ORIGINS=https://your-frontend-domain.com
+   railway variables set ALLOWED_ORIGINS=*
    ```
 
 5. **Deploy**
    ```bash
    railway up
    ```
+
+### Testing Configuration
+
+For testing purposes, you can set `ALLOWED_ORIGINS=*` to allow all origins. This is useful for:
+
+- **API Testing**: Tools like Postman, Insomnia, or curl
+- **Frontend Development**: Any local development server
+- **Mobile Apps**: Native mobile applications
+- **Public Testing**: Making the API publicly accessible
+
+**⚠️ Security Warning**: Only use `ALLOWED_ORIGINS=*` for testing. In production, specify exact domains:
+
+```bash
+# Production example
+railway variables set ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
+```
 
 ## 🔧 Configuration
 
@@ -194,12 +210,44 @@ The server includes comprehensive security headers:
 
 ## 🧪 Testing
 
+### Unit Tests
+
 ```bash
 # Run tests
 npm test
 
 # Run tests with coverage
 npm run test:coverage
+```
+
+### API Testing
+
+With `ALLOWED_ORIGINS=*`, you can test the API from any origin:
+
+#### Health Check
+```bash
+curl https://your-railway-app.railway.app/api/health
+```
+
+#### Authentication Test
+```bash
+# Primary authentication
+curl -X POST https://your-railway-app.railway.app/api/auth/primary \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser", "password": "testpass"}'
+```
+
+#### Using Postman/Insomnia
+1. Set the base URL to your Railway app URL
+2. Add headers as needed
+3. All endpoints will be accessible for testing
+
+#### Frontend Testing
+```javascript
+// Example fetch request
+fetch('https://your-railway-app.railway.app/api/health')
+  .then(response => response.json())
+  .then(data => console.log(data));
 ```
 
 ## 📊 Monitoring

@@ -101,11 +101,31 @@ class GatewayServer {
     }));
 
     // CORS configuration
-    this.app.use(cors({
-      origin: process.env.ALLOWED_ORIGINS?.split(',') || ['https://localhost:3000'],
+    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['https://localhost:3000'];
+    
+    // Handle wildcard origin for testing
+    const corsOptions = {
+      origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        
+        // Check if wildcard is enabled
+        if (allowedOrigins.includes('*')) {
+          return callback(null, true);
+        }
+        
+        // Check if origin is in allowed list
+        if (allowedOrigins.indexOf(origin) !== -1) {
+          return callback(null, true);
+        }
+        
+        callback(new Error('Not allowed by CORS'));
+      },
       credentials: true,
       optionsSuccessStatus: 200
-    }));
+    };
+    
+    this.app.use(cors(corsOptions));
 
     // Rate limiting
     const limiter = rateLimit({
@@ -761,6 +781,249 @@ class GatewayServer {
   async handleTokenRefresh(req, res) {
     // Implementation for token refresh
     res.json({ message: 'Token refresh endpoint' });
+  }
+
+  // Missing route handlers
+  async handleBiometricRegister(req, res) {
+    try {
+      const { userId, biometricData } = req.body;
+      
+      if (!userId || !biometricData) {
+        return res.status(400).json({ error: 'User ID and biometric data required' });
+      }
+
+      // Store biometric credentials
+      await this.db.query(
+        'UPDATE users SET biometric_credentials = $1 WHERE id = $2',
+        [JSON.stringify(biometricData), userId]
+      );
+
+      res.json({ message: 'Biometric credentials registered successfully' });
+    } catch (error) {
+      console.error('Biometric registration error:', error);
+      res.status(500).json({ error: 'Failed to register biometric credentials' });
+    }
+  }
+
+  async handleBiometricChallenge(req, res) {
+    try {
+      const { userId } = req.query;
+      
+      if (!userId) {
+        return res.status(400).json({ error: 'User ID required' });
+      }
+
+      // Generate challenge for biometric authentication
+      const challenge = crypto.randomBytes(32).toString('hex');
+      
+      // Store challenge temporarily (you might want to use Redis for this)
+      this.sessionStore.set(`challenge:${userId}`, challenge);
+
+      res.json({ challenge });
+    } catch (error) {
+      console.error('Biometric challenge error:', error);
+      res.status(500).json({ error: 'Failed to generate challenge' });
+    }
+  }
+
+  async handleBiometricVerify(req, res) {
+    try {
+      const { userId, signature, challenge } = req.body;
+      
+      if (!userId || !signature || !challenge) {
+        return res.status(400).json({ error: 'User ID, signature, and challenge required' });
+      }
+
+      // Verify the stored challenge
+      const storedChallenge = this.sessionStore.get(`challenge:${userId}`);
+      if (!storedChallenge || storedChallenge !== challenge) {
+        return res.status(400).json({ error: 'Invalid challenge' });
+      }
+
+      // Verify biometric signature (implement your verification logic here)
+      // This is a placeholder - implement actual biometric verification
+      const isValid = true; // Replace with actual verification
+
+      if (isValid) {
+        // Clear the challenge
+        this.sessionStore.delete(`challenge:${userId}`);
+        
+        // Generate session token
+        const token = jwt.sign(
+          { userId, type: 'biometric' },
+          process.env.JWT_SECRET,
+          { expiresIn: '1h' }
+        );
+
+        res.json({ token, message: 'Biometric authentication successful' });
+      } else {
+        res.status(401).json({ error: 'Biometric verification failed' });
+      }
+    } catch (error) {
+      console.error('Biometric verification error:', error);
+      res.status(500).json({ error: 'Failed to verify biometric credentials' });
+    }
+  }
+
+  async handleLogout(req, res) {
+    try {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.split(' ')[1];
+
+      if (token) {
+        // In a real implementation, you might want to blacklist the token
+        // For now, we'll just return success
+        await this.logSecurityEventInternal('logout', req.user?.userId, req);
+      }
+
+      res.json({ message: 'Logged out successfully' });
+    } catch (error) {
+      console.error('Logout error:', error);
+      res.status(500).json({ error: 'Failed to logout' });
+    }
+  }
+
+  async validateSession(req, res) {
+    try {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.split(' ')[1];
+
+      if (!token) {
+        return res.status(401).json({ error: 'No token provided' });
+      }
+
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        res.json({ 
+          valid: true, 
+          user: decoded,
+          expiresAt: new Date(decoded.exp * 1000)
+        });
+      });
+    } catch (error) {
+      console.error('Session validation error:', error);
+      res.status(500).json({ error: 'Failed to validate session' });
+    }
+  }
+
+  async getSessionPublicKey(req, res) {
+    try {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.split(' ')[1];
+
+      if (!token) {
+        return res.status(401).json({ error: 'No token provided' });
+      }
+
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        // Return the public key for this session
+        res.json({ 
+          publicKey: process.env.SESSION_PUBLIC_KEY || 'default-public-key'
+        });
+      });
+    } catch (error) {
+      console.error('Get session public key error:', error);
+      res.status(500).json({ error: 'Failed to get session public key' });
+    }
+  }
+
+  async updateEncryptedMetadata(req, res) {
+    try {
+      const { documentId, encryptedData } = req.body;
+      const userId = req.user.userId;
+
+      if (!documentId || !encryptedData) {
+        return res.status(400).json({ error: 'Document ID and encrypted data required' });
+      }
+
+      // Update or insert encrypted metadata
+      await this.db.query(
+        `INSERT INTO encrypted_metadata (user_id, document_id, encrypted_data) 
+         VALUES ($1, $2, $3) 
+         ON CONFLICT (user_id, document_id) 
+         DO UPDATE SET encrypted_data = $3, last_updated = CURRENT_TIMESTAMP`,
+        [userId, documentId, encryptedData]
+      );
+
+      res.json({ message: 'Encrypted metadata updated successfully' });
+    } catch (error) {
+      console.error('Update encrypted metadata error:', error);
+      res.status(500).json({ error: 'Failed to update encrypted metadata' });
+    }
+  }
+
+  async logDocumentAccess(req, res) {
+    try {
+      const { documentId, action, metadata } = req.body;
+      const userId = req.user.userId;
+
+      await this.logDocumentAccessInternal(userId, documentId, action, req, metadata);
+      res.json({ message: 'Document access logged successfully' });
+    } catch (error) {
+      console.error('Log document access error:', error);
+      res.status(500).json({ error: 'Failed to log document access' });
+    }
+  }
+
+  async logSecurityEvent(req, res) {
+    try {
+      const { eventType, data } = req.body;
+      const userId = req.user.userId;
+
+      await this.logSecurityEventInternal(eventType, userId, req, data);
+      res.json({ message: 'Security event logged successfully' });
+    } catch (error) {
+      console.error('Log security event error:', error);
+      res.status(500).json({ error: 'Failed to log security event' });
+    }
+  }
+
+  async storeUserPublicKey(req, res) {
+    try {
+      const { publicKey } = req.body;
+      const userId = req.user.userId;
+
+      if (!publicKey) {
+        return res.status(400).json({ error: 'Public key required' });
+      }
+
+      await this.db.query(
+        'UPDATE users SET public_key = $1 WHERE id = $2',
+        [publicKey, userId]
+      );
+
+      res.json({ message: 'Public key stored successfully' });
+    } catch (error) {
+      console.error('Store user public key error:', error);
+      res.status(500).json({ error: 'Failed to store public key' });
+    }
+  }
+
+  async getUserProfile(req, res) {
+    try {
+      const userId = req.user.userId;
+
+      const result = await this.db.query(
+        'SELECT id, username, email, created_at, last_login FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({ user: result.rows[0] });
+    } catch (error) {
+      console.error('Get user profile error:', error);
+      res.status(500).json({ error: 'Failed to get user profile' });
+    }
   }
 
   // ... other route handlers
