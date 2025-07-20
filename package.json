@@ -10,6 +10,7 @@
       "test:coverage": "jest --coverage",
       "migrate": "node scripts/migrate.js",
       "setup": "node scripts/setup-dev.js",
+      "certs": "./scripts/generate-dev-certs.sh",
       "build": "echo 'No build step needed'",
       "postinstall": "node scripts/setup-dev.js"
     },

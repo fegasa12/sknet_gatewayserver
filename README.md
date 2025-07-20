@@ -92,6 +92,10 @@ Client App → Gateway Server → Private API
 
 ### Railway Deployment
 
+🚀 **One-Click Deploy**: [Deploy to Railway](https://railway.app/template/new?template=https://github.com/your-username/sknet_gatewayserver)
+
+**Manual Setup**:
+
 1. **Connect to Railway**
    ```bash
    railway login
@@ -112,6 +116,7 @@ Client App → Gateway Server → Private API
 
 4. **Set environment variables**
    ```bash
+   railway variables set NODE_ENV=production
    railway variables set JWT_SECRET=your_super_secret_jwt_key
    railway variables set JWT_REFRESH_SECRET=your_super_secret_refresh_key
    railway variables set GATEWAY_SECRET=your_gateway_secret
@@ -123,6 +128,15 @@ Client App → Gateway Server → Private API
    ```bash
    railway up
    ```
+
+**✅ Railway automatically handles**:
+- SSL/HTTPS certificates
+- Database connection (`DATABASE_URL`)
+- Redis connection (`REDIS_URL`)
+- Health checks
+- Auto-scaling
+
+**📖 For detailed Railway setup**: See [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md)
 
 ### Testing Configuration
 

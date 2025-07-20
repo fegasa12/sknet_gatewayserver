@@ -72,8 +72,14 @@ class GatewayServer {
       // Setup database tables if they don't exist
       await this.setupDatabase();
     } catch (error) {
-      console.error('❌ Database connection failed:', error.message);
-      throw error;
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('⚠️  Database connection failed in development mode, continuing without database:', error.message);
+        console.warn('💡 To use database features, start PostgreSQL locally or set DATABASE_URL');
+        this.db = null;
+      } else {
+        console.error('❌ Database connection failed:', error.message);
+        throw error;
+      }
     }
   }
 
@@ -216,7 +222,7 @@ class GatewayServer {
 
     // Add request interceptor for private API authentication
     this.privateApiClient.interceptors.request.use((config) => {
-      config.headers['X-Gateway-Token'] = process.env.GATEWAY_SECRET;
+      config.headers['X-Gateway-Token'] = process.env.GATEWAY_SECRET || 'dev-gateway-secret-change-in-production';
       config.headers['X-Request-ID'] = crypto.randomUUID();
       return config;
     });
@@ -298,6 +304,11 @@ class GatewayServer {
         return res.status(400).json({ error: 'Username and password required' });
       }
 
+      // Check if database is available
+      if (!this.db) {
+        return res.status(503).json({ error: 'Database not available' });
+      }
+
       // Get user from database
       const userQuery = await this.db.query(
         'SELECT * FROM users WHERE username = $1',
@@ -346,11 +357,18 @@ class GatewayServer {
 
       // Generate challenge ID for MFA
       const challengeId = crypto.randomUUID();
-      await this.redis.setEx(`challenge:${challengeId}`, 300, JSON.stringify({
+      const challengeData = JSON.stringify({
         userId: user.id,
         username: user.username,
         step: 'mfa_required'
-      }));
+      });
+      
+      if (this.redis) {
+        await this.redis.setEx(`challenge:${challengeId}`, 300, challengeData);
+      } else {
+        // Fallback to session store if Redis is not available
+        this.sessionStore.set(`challenge:${challengeId}`, challengeData);
+      }
 
       res.json({
         challengeId,
@@ -369,13 +387,25 @@ class GatewayServer {
     try {
       const { challengeId, secondFactor, deviceFingerprint } = req.body;
 
+      // Check if database is available
+      if (!this.db) {
+        return res.status(503).json({ error: 'Database not available' });
+      }
+
       // Get challenge data
-      const challengeData = await this.redis.get(`challenge:${challengeId}`);
+      let challengeData;
+      if (this.redis) {
+        challengeData = await this.redis.get(`challenge:${challengeId}`);
+      } else {
+        // Fallback to session store if Redis is not available
+        challengeData = this.sessionStore.get(`challenge:${challengeId}`);
+      }
+      
       if (!challengeData) {
         return res.status(400).json({ error: 'Invalid or expired challenge' });
       }
 
-      const challenge = JSON.parse(challengeData);
+      const challenge = typeof challengeData === 'string' ? JSON.parse(challengeData) : challengeData;
       const user = await this.db.query('SELECT * FROM users WHERE id = $1', [challenge.userId]);
       
       if (user.rows.length === 0) {
@@ -414,7 +444,7 @@ class GatewayServer {
           username: userData.username,
           sessionId 
         },
-        process.env.JWT_SECRET,
+        process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production',
         { expiresIn: '15m' }
       );
 
@@ -424,7 +454,7 @@ class GatewayServer {
           sessionId,
           type: 'refresh' 
         },
-        process.env.JWT_REFRESH_SECRET,
+        process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-change-in-production',
         { expiresIn: '7d' }
       );
 
@@ -448,7 +478,11 @@ class GatewayServer {
       );
 
       // Clean up challenge
-      await this.redis.del(`challenge:${challengeId}`);
+      if (this.redis) {
+        await this.redis.del(`challenge:${challengeId}`);
+      } else {
+        this.sessionStore.delete(`challenge:${challengeId}`);
+      }
 
       // Log successful login
       await this.logSecurityEventInternal('successful_login', userData.id, req, {
@@ -714,7 +748,7 @@ class GatewayServer {
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production', (err, user) => {
       if (err) {
         if (err.name === 'TokenExpiredError') {
           return res.status(401).json({ error: 'Token expired' });
@@ -730,13 +764,18 @@ class GatewayServer {
   // Utility methods
   generateUserKey(userId, username) {
     return crypto
-      .createHmac('sha256', process.env.USER_KEY_SECRET)
+      .createHmac('sha256', process.env.USER_KEY_SECRET || 'dev-user-key-secret-change-in-production')
       .update(`${userId}:${username}`)
       .digest('hex');
   }
 
   async logDocumentAccessInternal(userId, documentId, action, req, metadata = {}) {
     try {
+      if (!this.db) {
+        console.warn('Database not available, skipping document access log');
+        return;
+      }
+      
       await this.db.query(
         'INSERT INTO document_access_logs (user_id, document_id, action, session_id, ip_address, user_agent, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7)',
         [
@@ -756,6 +795,11 @@ class GatewayServer {
 
   async logSecurityEventInternal(eventType, userId, req, data = {}) {
     try {
+      if (!this.db) {
+        console.warn('Database not available, skipping security event log');
+        return;
+      }
+      
       await this.db.query(
         'INSERT INTO security_events (event_type, user_id, session_id, ip_address, user_agent, data) VALUES ($1, $2, $3, $4, $5, $6)',
         [
@@ -792,6 +836,11 @@ class GatewayServer {
         return res.status(400).json({ error: 'User ID and biometric data required' });
       }
 
+      // Check if database is available
+      if (!this.db) {
+        return res.status(503).json({ error: 'Database not available' });
+      }
+
       // Store biometric credentials
       await this.db.query(
         'UPDATE users SET biometric_credentials = $1 WHERE id = $2',
@@ -816,8 +865,12 @@ class GatewayServer {
       // Generate challenge for biometric authentication
       const challenge = crypto.randomBytes(32).toString('hex');
       
-      // Store challenge temporarily (you might want to use Redis for this)
-      this.sessionStore.set(`challenge:${userId}`, challenge);
+      // Store challenge temporarily
+      if (this.redis) {
+        await this.redis.set(`challenge:${userId}`, challenge, 'EX', 300); // 5 minutes expiry
+      } else {
+        this.sessionStore.set(`challenge:${userId}`, challenge);
+      }
 
       res.json({ challenge });
     } catch (error) {
@@ -835,7 +888,13 @@ class GatewayServer {
       }
 
       // Verify the stored challenge
-      const storedChallenge = this.sessionStore.get(`challenge:${userId}`);
+      let storedChallenge;
+      if (this.redis) {
+        storedChallenge = await this.redis.get(`challenge:${userId}`);
+      } else {
+        storedChallenge = this.sessionStore.get(`challenge:${userId}`);
+      }
+      
       if (!storedChallenge || storedChallenge !== challenge) {
         return res.status(400).json({ error: 'Invalid challenge' });
       }
@@ -846,12 +905,16 @@ class GatewayServer {
 
       if (isValid) {
         // Clear the challenge
-        this.sessionStore.delete(`challenge:${userId}`);
+        if (this.redis) {
+          await this.redis.del(`challenge:${userId}`);
+        } else {
+          this.sessionStore.delete(`challenge:${userId}`);
+        }
         
         // Generate session token
         const token = jwt.sign(
           { userId, type: 'biometric' },
-          process.env.JWT_SECRET,
+          process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production',
           { expiresIn: '1h' }
         );
 
@@ -892,7 +955,7 @@ class GatewayServer {
         return res.status(401).json({ error: 'No token provided' });
       }
 
-      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+      jwt.verify(token, process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production', (err, decoded) => {
         if (err) {
           return res.status(401).json({ error: 'Invalid token' });
         }
@@ -918,7 +981,7 @@ class GatewayServer {
         return res.status(401).json({ error: 'No token provided' });
       }
 
-      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+      jwt.verify(token, process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production', (err, decoded) => {
         if (err) {
           return res.status(401).json({ error: 'Invalid token' });
         }
@@ -941,6 +1004,11 @@ class GatewayServer {
 
       if (!documentId || !encryptedData) {
         return res.status(400).json({ error: 'Document ID and encrypted data required' });
+      }
+
+      // Check if database is available
+      if (!this.db) {
+        return res.status(503).json({ error: 'Database not available' });
       }
 
       // Update or insert encrypted metadata
@@ -994,6 +1062,11 @@ class GatewayServer {
         return res.status(400).json({ error: 'Public key required' });
       }
 
+      // Check if database is available
+      if (!this.db) {
+        return res.status(503).json({ error: 'Database not available' });
+      }
+
       await this.db.query(
         'UPDATE users SET public_key = $1 WHERE id = $2',
         [publicKey, userId]
@@ -1009,6 +1082,11 @@ class GatewayServer {
   async getUserProfile(req, res) {
     try {
       const userId = req.user.userId;
+
+      // Check if database is available
+      if (!this.db) {
+        return res.status(503).json({ error: 'Database not available' });
+      }
 
       const result = await this.db.query(
         'SELECT id, username, email, created_at, last_login FROM users WHERE id = $1',
@@ -1035,14 +1113,51 @@ async function startServer() {
   await gateway.initialize();
 
   const port = process.env.PORT || 3001;
-  const httpsOptions = {
-    key: fs.readFileSync(process.env.SSL_KEY_PATH || './certs/server.key'),
-    cert: fs.readFileSync(process.env.SSL_CERT_PATH || './certs/server.crt')
-  };
+  
+  // Check if we're in a cloud environment (Railway, Heroku, etc.)
+  const isCloudEnvironment = process.env.RAILWAY_ENVIRONMENT || 
+                            process.env.HEROKU_APP_NAME || 
+                            process.env.VERCEL_URL ||
+                            process.env.NODE_ENV === 'production';
+  
+  if (isCloudEnvironment) {
+    // Cloud platforms handle SSL termination, use HTTP server
+    console.log('☁️  Detected cloud environment, using HTTP server (SSL handled by platform)');
+    const http = require('http');
+    http.createServer(gateway.app).listen(port, () => {
+      console.log(`🚀 Gateway Server running on port ${port} (HTTPS handled by platform)`);
+    });
+  } else {
+    // Local development - check for SSL certificates
+    const sslKeyPath = process.env.SSL_KEY_PATH || './certs/server.key';
+    const sslCertPath = process.env.SSL_CERT_PATH || './certs/server.crt';
+    
+    try {
+      // Try to read SSL certificates
+      const httpsOptions = {
+        key: fs.readFileSync(sslKeyPath),
+        cert: fs.readFileSync(sslCertPath)
+      };
 
-  https.createServer(httpsOptions, gateway.app).listen(port, () => {
-    console.log(`Secure Gateway Server running on https://localhost:${port}`);
-  });
+      https.createServer(httpsOptions, gateway.app).listen(port, () => {
+        console.log(`🔒 Secure Gateway Server running on https://localhost:${port}`);
+      });
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        console.warn('⚠️  SSL certificates not found, starting HTTP server for development');
+        console.warn('💡 To enable HTTPS, run: npm run certs');
+        
+        // Fall back to HTTP server
+        const http = require('http');
+        http.createServer(gateway.app).listen(port, () => {
+          console.log(`🌐 Gateway Server running on http://localhost:${port}`);
+        });
+      } else {
+        console.error('❌ Failed to start server:', error.message);
+        throw error;
+      }
+    }
+  }
 }
 
 // Error handling
