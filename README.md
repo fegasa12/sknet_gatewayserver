@@ -159,6 +159,26 @@ The interactive script allows you to:
 
 **📖 For detailed user management**: See [docs/USER_MANAGEMENT.md](docs/USER_MANAGEMENT.md)
 
+### User Generation
+
+Generate test users and bulk user data:
+
+```bash
+# Generate 1 user (JSON)
+npm run user:generate
+
+# Generate 5 users with 2FA
+npm run user:generate -- -c 5 -t
+
+# Generate users in CSV format
+npm run user:generate -- -c 10 -f csv -o users.csv
+
+# Generate mobile users with biometric
+npm run user:generate -- -c 3 -p mobile -b
+```
+
+**📖 For detailed user generation**: See [docs/USER_GENERATION.md](docs/USER_GENERATION.md)
+
 ### Testing Configuration
 
 For testing purposes, you can set `ALLOWED_ORIGINS=*` to allow all origins. This is useful for:
