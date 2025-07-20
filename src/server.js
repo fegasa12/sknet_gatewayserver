@@ -37,27 +37,44 @@ class GatewayServer {
 
   async initialize() {
     // Initialize Redis for session management
+    // Use Railway's REDIS_URL or fall back to individual env vars
+    const redisUrl = process.env.REDIS_URL || 
+      `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || 6379}`;
+    
     this.redis = Redis.createClient({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: process.env.REDIS_PORT || 6379
+      url: redisUrl,
+      password: process.env.REDIS_PASSWORD
     });
-    await this.redis.connect();
+    
+    try {
+      await this.redis.connect();
+      console.log('✅ Redis connected successfully');
+    } catch (error) {
+      console.warn('⚠️  Redis connection failed, continuing without Redis:', error.message);
+      this.redis = null;
+    }
 
     // Initialize PostgreSQL for audit logs
+    // Use Railway's DATABASE_URL or fall back to individual env vars
+    const connectionString = process.env.DATABASE_URL || 
+      `postgresql://${process.env.DB_USER || 'postgres'}:${process.env.DB_PASSWORD}@${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || 'secure_docs'}`;
+    
     this.db = new Pool({
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 5432,
-      database: process.env.DB_NAME || 'secure_docs',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD
+      connectionString,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     });
 
-    // Test database connection
-    await this.db.query('SELECT NOW()');
-    console.log('Database connected successfully');
+    try {
+      // Test database connection
+      await this.db.query('SELECT NOW()');
+      console.log('✅ Database connected successfully');
 
-    // Setup database tables if they don't exist
-    await this.setupDatabase();
+      // Setup database tables if they don't exist
+      await this.setupDatabase();
+    } catch (error) {
+      console.error('❌ Database connection failed:', error.message);
+      throw error;
+    }
   }
 
   setupMiddleware() {
@@ -149,16 +166,33 @@ class GatewayServer {
 
   setupPrivateApiConnection() {
     // Configure axios client for private API with mTLS
-    this.privateApiClient = axios.create({
+    const config = {
       baseURL: process.env.PRIVATE_API_URL || 'https://private-api.internal',
-      timeout: 30000,
-      httpsAgent: new https.Agent({
-        cert: fs.readFileSync(process.env.CLIENT_CERT_PATH || './certs/client.crt'),
-        key: fs.readFileSync(process.env.CLIENT_KEY_PATH || './certs/client.key'),
-        ca: fs.readFileSync(process.env.CA_CERT_PATH || './certs/ca.crt'),
-        rejectUnauthorized: true
-      })
-    });
+      timeout: 30000
+    };
+
+    // Add mTLS configuration if certificates are available
+    try {
+      const certPath = process.env.CLIENT_CERT_PATH || './certs/client.crt';
+      const keyPath = process.env.CLIENT_KEY_PATH || './certs/client.key';
+      const caPath = process.env.CA_CERT_PATH || './certs/ca.crt';
+
+      if (fs.existsSync(certPath) && fs.existsSync(keyPath) && fs.existsSync(caPath)) {
+        config.httpsAgent = new https.Agent({
+          cert: fs.readFileSync(certPath),
+          key: fs.readFileSync(keyPath),
+          ca: fs.readFileSync(caPath),
+          rejectUnauthorized: true
+        });
+        console.log('✅ mTLS certificates loaded for private API');
+      } else {
+        console.warn('⚠️  mTLS certificates not found, private API connection may fail');
+      }
+    } catch (error) {
+      console.warn('⚠️  Failed to load mTLS certificates:', error.message);
+    }
+
+    this.privateApiClient = axios.create(config);
 
     // Add request interceptor for private API authentication
     this.privateApiClient.interceptors.request.use((config) => {
